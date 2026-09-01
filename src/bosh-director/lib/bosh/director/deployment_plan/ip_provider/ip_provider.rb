@@ -7,6 +7,7 @@ module Bosh::Director
         @logger = Bosh::Director::TaggedLogger.new(logger, 'network-configuration')
         @ip_repo = ip_repo
         @networks = networks
+        @subnet_strategy = SubnetDistribution.build(Config.dynamic_subnet_strategy, networks: networks)
       end
 
       def release(reservation)
@@ -64,7 +65,7 @@ module Bosh::Director
         if reservation.ip.nil?
           @logger.debug("Allocating dynamic ip for manual network '#{reservation.network.name}'")
 
-          filter_subnet_by_instance_az(reservation).each do |subnet|
+          subnets_in_fill_order(reservation).each do |subnet|
             if (ip = @ip_repo.allocate_dynamic_ip(reservation, subnet))
               @logger.debug("Reserving dynamic IP '#{ip}' for manual network '#{reservation.network.name}'")
               reservation.resolve_ip(ip)
@@ -152,6 +153,18 @@ module Bosh::Director
             subnet.availability_zone_names.include?(instance_az_name)
           end
         end
+      end
+
+      # Order in which candidate subnets are tried for a dynamic (auto-allocated)
+      # manual-network reservation. Candidate subnets (those in the instance's AZ)
+      # are ordered by the configured SubnetDistribution strategy; with fewer than
+      # two candidates there is nothing to distribute, so manifest order is returned
+      # unchanged.
+      def subnets_in_fill_order(reservation)
+        candidates = filter_subnet_by_instance_az(reservation)
+        return candidates if candidates.size < 2
+
+        @subnet_strategy.order(candidates, reservation)
       end
     end
   end
